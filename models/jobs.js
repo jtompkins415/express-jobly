@@ -13,17 +13,17 @@ class Job {
  * Returns  {title, salary, equity, compHandle} 
  */
 
-static async create({title, salary, equity, company_handle}){
+static async create(data){
     const result = await db.query(
         `INSERT INTO jobs
         (title, salary, equity, company_handle)
         VALUES($1, $2, $3, $4)
         RETURNING title, salary, equity, company_handle AS 'compHandle'`,
         [
-          title,
-          salary,
-          equity,
-          company_handle
+          data.title,
+          data.salary,
+          data.equity,
+          data.company_handle
         ]
     );
 
@@ -38,42 +38,85 @@ static async create({title, salary, equity, company_handle}){
  * Returns [{title, salary, equity, compHandle}]
  */
 
-static async findAll() {
-    const jobsRes = await db.query(
-        `SELECT title,
-                salary,
-                equity,
-                company_handle AS
+static async findAll({minSalary, hasEquity, title} = {}) {
+    const query =
+        `SELECT j.id,
+                j.title,
+                j.salary,
+                j.equity,
+                j.company_handle AS
                 'compHandle'
-        FROM jobs`);
+                c.name AS 'companyName'
+        FROM jobs j
+            LEFT JOIN companies AS c ON c.handle = j.company_handle`
     
-    return jobsRes.rows
+    const whereExpressions = [];
+    const queryValues = [];
+
+
+    if(minSalary !== undefined) {
+        queryValues.push(minSalary);
+        whereExpressions.push(`salary >= $${queryValues.length}`);
+    }
+
+    if(hasEquity === true){
+        whereExpressions.push(equity > 0);
+    }
+
+    if(title !== undefined ){
+        queryValues.push(`%${title}%`);
+        whereExpressions.push(`title ILIKE $${queryValues.length}`);
+    }
+
+    if(whereExpressions.length > 0){
+        query += " WHERE " + whereExpressions.join(" AND ");
+    }
+
+    query += " ORDER BY title";
+    const jobsRes = await db.query(query, queryValues);
+    return jobsRes.rows;
 };
 
 
-/** Given a company handle, return jobs from that company
+/** Given a job id, return job data
  * 
- * Returns [{title, salary, equity},...]
+ * Returns [{title, salary, equity, compHandle, company}
+ * where company is {handle, name, description, numEmployees, logoUrl}
  * 
- * Throws NotFoundError if company is not found
+ * Throws NotFoundError if job is not found
  * 
  */
 
-static async get(compHandle){
-    const jobs = await db.query(
+static async get(id){
+    const jobRes = await db.query(
         `SELECT title,
                 salary,
-                equity
+                equity,
+                company_handle AS 'compHandle'
         FROM jobs
-        WHERE company_handle = $1`,
-        [compHandle]
+        WHERE id = $1`,
+        [id]
     )
 
-    if(jobs.rows.length === 0){
-        throw new NotFoundError(`No company: ${compHandle}`)
+    const job = jobRes.rows[0]
+
+    if(!job){
+        throw new NotFoundError(`No job: ${id}`)
     }
 
-    return jobs.rows
+    const companiesRes = await db.query(
+        `SELECT handle,
+                name,
+                description,
+                numEmployees AS 'numEmployees',
+                logoUrl AS 'logoUrl'
+            FROM companies
+            WHERE handle = $1`, [job.company_handle])
+    
+    delete job.company_handle;
+    job.company = companiesRes.rows[0];
+
+    return job    
 };
 
 /** Update job data with `data`.
@@ -83,25 +126,22 @@ static async get(compHandle){
    *
    * Data can include: {title, salary, equity}
    *
-   * Returns {title, salary, equity}
+   * Returns {id, title, salary, equity, companyHandle}
    *
    * Throws NotFoundError if not found.
    */
 
 static async update(id, data){
     const { setCols, values } = sqlForPartialUpdate(
-        data, {
-            salary: "salary",
-            equity: "equity"
-        });
+        data, {});
     
     const idVarIdx = "$" + (values.length + 1);
 
     const querySql = `UPDATE
-    companies
+    jobs
             SET ${setCols}
             WHERE id = ${idVarIdx}
-            RETURNING title, salary, equity`
+            RETURNING id, title, salary, equity, company_handle AS 'companyHandle'`;
     
     const result = await db.query(querySql, [...values, id])
     const job = result.rows[0];
@@ -119,9 +159,9 @@ static async update(id, data){
 static async remove(id){
     const result = await db.query(
         `DELETE
-        FROM companies
+        FROM jobs
         WHERE id = $1
-        RETURNING title`,
+        RETURNING id`,
         [id]);
     
     const job = result.rows[0];
