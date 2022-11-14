@@ -1,9 +1,26 @@
-const { BadRequestError } = require('../expressError');
+
 const {sqlForPartialUpdate} = require('./sql');
 
 
+
 describe('sqlForPartialUpdate', () => {
-    test('works', async () => {
-        
+    test('works for 1 item', () => {
+        const result = sqlForPartialUpdate(
+          {f1: 'v1'},
+          {f1: 'f1', f2: 'f2'});
+        expect(result).toEqual({
+          setCols:"\"f1\"=$1",
+          values: ["v1"]
+        })
+    })
+
+    test('works for multiple items', () => {
+      const result = sqlForPartialUpdate(
+        {f1: "v1", jsF2: "v2"},
+        {jsf2: "f2"});
+      expect(result).toEqual({
+        setCols: "\"f1\"=$1, \"f2\"=$2",
+        values: ["v1", "v2"]
+      })
     })
 })
